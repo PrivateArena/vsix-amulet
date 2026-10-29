@@ -63,6 +63,12 @@ webview  --postMessage-->  extension host  --Node IPC, JSON envelope-->  agent w
   model, thinking level, compact, abort, restart).
 * **Webview** rebuilds the transcript from `message_start` / `message_update` deltas /
   `message_end` (authoritative) and `tool_execution_*`, with a composer that steers while busy.
+  Each tool call is one expandable card — `read src/cart.ts · 128 lines`, `bash npm test · exit 1`,
+  `edit src/cart.ts · +2 −1` with the hunk coloured — built by a pure summariser so the rules can be
+  tested without a DOM and reused in logs or notifications.
+* **Resources** (`src/worker/resources.ts`, `src/host/managePanel.ts`): the SDK's resource loader is
+  reported through as extensions, skills, prompt templates, instructions files and load failures, in an
+  editor tab, with `Reload Pi config` guarded against interrupting a response or a compaction.
 * **Context** (`amulet/src/shared/contextBlock.ts`, `src/host/`, `src/webview/composer.ts`): files
   attach as references, lines that cannot be re-read from disk attach as quoted text, and the host
   — never the webview — renders the whole draft into one marked block in front of the message.
@@ -77,21 +83,40 @@ configured provider inside a throwaway workspace and session directory):
 | test | covers | status |
 |---|---|---|
 | `test/smoke-worker.mjs` | start, empty history, prompt, streaming, tool call, new session, switch back + transcript recovery, session list | PASS |
+| `test/tool-summary.mjs` | tool call cards: counts, diff honesty, images, errors, and inputs that must not throw (24 checks, no model call) |
+| `test/package-vsix.mjs` | unpacks the built `.vsix` and re-runs both integration suites against the files VS Code would load; also checks package contents and size |
 | `test/context-block.mjs` | wire format, tag order, budgets, escaping and injection cases, round trip, mention parsing, draft merging (23 checks, no model call) | PASS |
-| `test/host-activate.cjs` | `activate()` against a stubbed `vscode` API: registrations, CSP html, worker ready, selection/file/problem capture, dismissal and focus semantics, `@` search, assembled block reaching the worker, run settled, reply content | PASS |
+| `test/host-activate.cjs` | `activate()` against a stubbed `vscode` API: registrations, CSP html, worker ready, selection/file/problem capture, dismissal and focus semantics, `@` search, assembled block reaching the worker, resource report, thinking-level availability, payload commands, palette-to-header sync, reload guards, the resources panel's HTML, run settled, reply content (38 checks) | PASS |
 
 Not yet verified: rendering inside a real VS Code window (needs a live workbench). The webview's
 chip and picker DOM is exercised only by types and by the host-side half of its protocol.
+
+## Packaging
+
+`npm run vsix` produces `dist/amulet-<version>.vsix` — **2.7 MB**, 19 files. The Pi SDK and its whole
+dependency graph are bundled into `dist/worker.mjs`; the one package that stays a real package is
+`@silvia-odwyer/photon-node`, which loads its `.wasm` relative to its own folder — the payload ships
+that same library unpacked, for the same reason. Everything is MIT apart from that Apache-2.0
+dependency, and `amulet/THIRD-PARTY-NOTICES.txt` names both: bundling is not a licence to drop
+attribution. `npm run test:vsix` unpacks the built package and re-runs the integration suites against
+the files VS Code would actually load, which is the only way the bundle is proven.
 
 ## Roadmap
 
 1. **M1 — vertical slice** *(done)*: worker, host, webview, sessions, models, thinking levels, compact, abort, restart.
 2. **M2 — context** *(done)*: references vs. quoted lines, `@` picker, selection/file/problem/image
    attachment, auto-attach rules with dismiss-then-stay-off memory, context chips on sent messages.
-3. **M3 — changes**: per-tool-call edit tracking, diff view, revert, Git/SCM integration, commit prompt.
-4. **M4 — session rail**: session list, grouping, rename, branching tree, search.
-5. **M5 — platform**: workspace trust, sandbox toggle, hooks, extension status widgets, TUI surface.
-6. **M6 — extras**: voice, worktrees, subagent monitor, `.vsix` packaging, CI.
+3. **M3 — product surface** *(done)*: what a chat pane needs before it is usable — tool calls that
+   read as calls, model and session switching, the resource report and `Reload Pi config`, and a
+   `.vsix` that ships and runs. Diff review moved to M4, the next milestone.
+4. **M4 — changes**: per-tool-call edit tracking, diff view, revert, Git/SCM integration, commit prompt.
+5. **M5 — session rail**: session list as a view, grouping, delete, branching and fork, search across
+   workspaces. Switching, naming and the current marker already exist as quick picks.
+6. **M6 — platform**: workspace trust, sandbox toggle, hooks, extension status widgets, TUI surface.
+7. **M7 — extras**: voice, worktrees, subagent monitor, CI.
+
+Deliberately not planned: speech-to-text prompting. It is a large, environment-specific surface for a
+convenience, and an alpha needs a trustworthy core first.
 
 
 ## Recovered reference material

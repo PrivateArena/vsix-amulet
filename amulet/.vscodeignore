@@ -1,0 +1,15 @@
+# Amulet ships prebuilt: dist/ holds everything the extension runs. Sources, tests and tooling stay
+# out of the package.
+src/**
+test/**
+build.mjs
+tsconfig*.json
+media/amulet-marketing.svg
+**/*.ts
+**/*.map
+.vscode-test/**
+
+# The Pi SDK is bundled into dist/worker.mjs. The only code that must stay a real package is the one
+# that loads its .wasm relative to its own folder.
+node_modules/**
+!node_modules/@silvia-odwyer/**

@@ -113,6 +113,8 @@ export interface SessionState {
   cwd: string;
   model?: ModelSummary;
   thinkingLevel: ThinkingLevel;
+  /** Levels the current model actually supports; the picker offers these and nothing else. */
+  availableThinkingLevels?: ThinkingLevel[];
   isStreaming: boolean;
   isCompacting: boolean;
   isRetrying: boolean;
@@ -130,6 +132,48 @@ export interface SessionListItem {
   modified: string;
   messageCount: number;
   firstMessage: string;
+  /** The session this worker currently has open. */
+  current: boolean;
+}
+
+/* ------------------------------------------------------------------ resources */
+
+/**
+ * One Pi extension as the resource loader sees it. The management surface shows this instead of
+ * making the user open ~/.pi and guess which file registered what.
+ */
+export interface ExtensionSummary {
+  /** As configured, for example `~/.pi/extensions/permissions.ts` or `builtin:mcp`. */
+  path: string;
+  name: string;
+  builtin: boolean;
+  /** Where it came from, straight from the SDK's source info. */
+  scope: "user" | "project" | "temporary" | "unknown";
+  source: string;
+  /** Loaded but not listed in pickers, such as a dependency of another extension. */
+  hidden: boolean;
+  tools: string[];
+  commands: string[];
+  /** Count of event handlers, which is all a read-only extension registers. */
+  handlerCount: number;
+  error?: string;
+}
+
+export interface ResourceReport {
+  extensions: ExtensionSummary[];
+  /** Extensions that failed to load: the worker keeps running without them. */
+  errors: Array<{ path: string; error: string }>;
+  warnings: Array<{ path: string; warning: string }>;
+  skills: Array<{ name: string; description: string; path: string }>;
+  prompts: Array<{ name: string; description: string; path: string }>;
+  themes: string[];
+  /** AGENTS.md and friends that made up the instructions. */
+  instructionsFiles: string[];
+  systemPromptFile?: string;
+  /** Warnings from skills, prompts and themes: name collisions and the like. */
+  diagnostics: Array<{ severity: string; message: string; path?: string }>;
+  /** The `extensions` setting, so the UI can say what would survive a reload. */
+  configuredExtensions: string[];
 }
 
 /* ------------------------------------------------------------------ commands */
@@ -167,6 +211,10 @@ export type WorkerCommand =
   | { id: string; type: "compact"; instructions?: string }
   | { id: string; type: "setAutoCompact"; enabled: boolean }
   | { id: string; type: "setAutoRetry"; enabled: boolean }
+  /** What Pi loaded: extensions, skills, prompts, themes, and whatever failed. */
+  | { id: string; type: "getResources" }
+  /** Re-read extensions, skills, prompts, themes and context files without restarting the process. */
+  | { id: string; type: "reload" }
   | { id: string; type: "shutdown" };
 
 export type WorkerCommandType = WorkerCommand["type"];
@@ -234,6 +282,8 @@ export type WorkerUplink =
 
 export type WebviewRequest =
   | { type: "command"; name: WorkerCommandType; payload?: Record<string, unknown> }
+  /** A command that lives in the editor rather than the worker: quick picks, panels, reload. */
+  | { type: "hostCommand"; name: string }
   /** Sent with a prompt: the host renders this into the context block in front of the text. */
   | { type: "prompt"; text: string; context?: ContextDraft; images?: ImageAttachment[]; streamingBehavior?: "steer" | "follow-up" }
   | { type: "ready" }
@@ -254,6 +304,8 @@ export type HostEvent =
   | { type: "messages"; messages: TranscriptMessage[] }
   | { type: "models"; models: ModelSummary[] }
   | { type: "sessions"; sessions: SessionListItem[] }
+  /** Extensions, skills and their load errors, for the management surface. */
+  | { type: "resources"; resources: ResourceReport }
   | { type: "workerStatus"; status: "starting" | "ready" | "restarting" | "stopped" | "failed"; detail?: string }
   | { type: "toast"; message: string; level: "info" | "warning" | "error" }
   /** Context collected in the editor (a command, an auto-attach) merged into the composer draft. */

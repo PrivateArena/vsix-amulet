@@ -7,7 +7,15 @@
  */
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
-import type { HostEvent, SessionState, WebviewRequest } from "../shared/protocol.js";
+import type {
+  HostEvent,
+  ModelSummary,
+  ResourceReport,
+  SessionListItem,
+  SessionState,
+  ThinkingLevel,
+  WebviewRequest,
+} from "../shared/protocol.js";
 import type { AgentWorkerClient } from "./workerClient.js";
 import type { ContextBridge } from "./contextBridge.js";
 
@@ -118,7 +126,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "prompt":
         return this.sendPrompt(message);
       case "command":
-        return this.runWorkerCommand(message.name);
+        return this.runWorkerCommand(message.name, message.payload);
+      case "hostCommand":
+        // Quick picks and panels live in the editor, not in the worker.
+        return void (await vscode.commands.executeCommand(message.name));
       default:
         return;
     }
@@ -130,7 +141,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const worker = await this.getWorker();
     if (!worker) return void this.post({ type: "toast", message: "The agent is not running for this workspace.", level: "error" });
     // The block is assembled here, on the trusted side of the boundary, from validated pieces.
-    const fullText = await this.context.buildPromptText(text, message.context);    try {
+    const fullText = await this.context.buildPromptText(text, message.context);
+    try {
       const state = await worker.command<SessionState>({ id: randomUUID(), type: "getState" });
       await worker.command({
         id: randomUUID(),
@@ -144,34 +156,95 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async runWorkerCommand(name: string): Promise<void> {
+  private async runWorkerCommand(name: string, payload?: Record<string, unknown>): Promise<void> {
     const worker = await this.getWorker();
     if (!worker) {
       this.post({ type: "toast", message: "The agent is not running for this workspace.", level: "error" });
       return;
     }
+    const id = () => randomUUID();
     try {
       switch (name) {
         case "abort":
-          return void (await worker.tryCommand({ id: randomUUID(), type: "abort" }));
+          return void (await worker.tryCommand({ id: id(), type: "abort" }));
         case "newSession":
-          return void (await worker.tryCommand({ id: randomUUID(), type: "newSession" }));
+          return void (await worker.tryCommand({ id: id(), type: "newSession" }));
         case "compact":
-          return void (await worker.tryCommand({ id: randomUUID(), type: "compact" }));
+          return void (await worker.tryCommand({ id: id(), type: "compact" }));
         case "listSessions": {
-          const sessions = await worker.command({ id: randomUUID(), type: "listSessions" });
-          return this.post({ type: "sessions", sessions: sessions as never });
+          const sessions = await worker.command<SessionListItem[]>({ id: id(), type: "listSessions" });
+          return this.post({ type: "sessions", sessions });
         }
         case "listModels": {
-          const models = await worker.command({ id: randomUUID(), type: "listModels" });
-          return this.post({ type: "models", models: models as never });
+          const models = await worker.command<ModelSummary[]>({ id: id(), type: "listModels" });
+          return this.post({ type: "models", models });
         }
+        case "setModel": {
+          await worker.command({ id: id(), type: "setModel", provider: String(payload?.provider ?? ""), modelId: String(payload?.modelId ?? "") });
+          return this.refreshHeader();
+        }
+        case "setThinkingLevel": {
+          await worker.command({ id: id(), type: "setThinkingLevel", level: payload?.level as ThinkingLevel });
+          return this.refreshHeader();
+        }
+        case "switchSession": {
+          await worker.command({ id: id(), type: "switchSession", sessionPath: String(payload?.sessionPath ?? "") });
+          return this.refreshHeader();
+        }
+        case "renameSession":
+          await worker.command({ id: id(), type: "renameSession", name: String(payload?.name ?? "") });
+          return this.refreshHeader();
+        case "getResources": {
+          const resources = await worker.command<ResourceReport>({ id: id(), type: "getResources" });
+          return this.post({ type: "resources", resources });
+        }
+        case "reload":
+          return this.reload();
         default:
           return this.post({ type: "toast", message: `Unsupported request: ${name}`, level: "warning" });
       }
     } catch (error) {
       this.post({ type: "toast", message: error instanceof Error ? error.message : String(error), level: "error" });
     }
+  }
+
+  /**
+   * Reload Pi's configuration in place, then refresh what it can change. Each refresh is reported
+   * separately: a transcript that did not come back is worth telling the user about, while the
+   * worker is still running and the reload itself succeeded.
+   */
+  async reload(): Promise<void> {
+    const worker = await this.getWorker();
+    if (!worker) return void this.post({ type: "toast", message: "The agent is not running for this workspace.", level: "error" });
+    try {
+      await worker.command({ id: randomUUID(), type: "reload" });
+      this.post({ type: "toast", message: "Pi config reloaded.", level: "info" });
+    } catch (error) {
+      return this.post({ type: "toast", message: error instanceof Error ? error.message : String(error), level: "error" });
+    }
+    await this.refreshHeader();
+    try {
+      await this.syncTranscript();
+    } catch {
+      this.post({ type: "toast", message: "Pi reloaded, but the current transcript could not be refreshed.", level: "warning" });
+    }
+    try {
+      const models = await worker.command<ModelSummary[]>({ id: randomUUID(), type: "listModels" });
+      this.post({ type: "models", models });
+    } catch {
+      this.post({ type: "toast", message: "Pi reloaded, but the model list could not be refreshed.", level: "warning" });
+    }
+    try {
+      const resources = await worker.command<ResourceReport>({ id: randomUUID(), type: "getResources" });
+      this.post({ type: "resources", resources });
+    } catch {
+      /* the panel reports this on its own */
+    }
+  }
+
+  /** Push a state the host already has, so a palette-driven change reaches the chat header. */
+  pushState(state: SessionState): void {
+    this.postSticky({ type: "state", state });
   }
 
   private async refreshHeader(): Promise<void> {

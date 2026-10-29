@@ -123,13 +123,30 @@ const vscode = {
       registered.views.push({ id, provider });
       return new Disposable();
     },
-    showWarningMessage: () => Promise.resolve(undefined),
-    showInformationMessage: () => Promise.resolve(undefined),
+    showWarningMessage: message => {
+      lastWarning = message;
+      return Promise.resolve(undefined); // the user cancelled, which is what the guard tests need
+    },
+    showInformationMessage: message => {
+      lastInfo = message;
+      return Promise.resolve(undefined);
+    },
     showErrorMessage: message => {
       lastError = message;
       return Promise.resolve(undefined);
     },
-    showQuickPick: () => Promise.resolve(undefined),
+    showQuickPick: () => Promise.resolve(quickPickChoice),
+    createWebviewPanel: (viewType, title) => {
+      panel = {
+        viewType,
+        title,
+        webview: { html: "", cspSource: "vscode-webview://test", onDidReceiveMessage: () => new Disposable(), postMessage: () => Promise.resolve(true) },
+        onDidDispose: () => new Disposable(),
+        reveal: () => {},
+        dispose: () => {},
+      };
+      return panel;
+    },
     showInputBox: () => Promise.resolve(undefined),
     showTextDocument: async doc => ({ document: doc, selection: undefined, revealRange() {} }),
   },
@@ -142,7 +159,11 @@ const vscode = {
       registered.commands.set(id, handler);
       return new Disposable();
     },
-    executeCommand: () => Promise.resolve(),
+    executeCommand: (id, ...args) => {
+      executed.push(id);
+      const handler = registered.commands.get(id);
+      return handler ? Promise.resolve(handler(...args)) : Promise.resolve();
+    },
   },
 };
 
@@ -151,6 +172,14 @@ const diagnosticPairs = [];
 const overrides = {};
 
 let lastError = "";
+let lastWarning = "";
+let lastInfo = "";
+/** Command ids the webview asked the editor to run, in order. */
+const executed = [];
+/** The most recent editor tab the extension opened. */
+let panel;
+/** What a quick pick answers with; set by the tests that drive palette commands. */
+let quickPickChoice;
 
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
@@ -207,9 +236,12 @@ function createFakeView() {
 const cwd = sandbox;
 vscode.workspace.workspaceFolders = [{ uri: Uri.file(cwd), name: path.basename(cwd), index: 0 }];
 
-const extension = require("../dist/extension.cjs");
+/* AMULET_DIST loads a build from somewhere else, such as the one unpacked from a .vsix. */
+const distDir = process.env.AMULET_DIST ?? path.resolve(__dirname, "..", "dist");
+const extensionRoot = path.dirname(distDir);
+const extension = require(path.join(distDir, "extension.cjs"));
 const context = {
-  extensionPath: path.resolve(__dirname, ".."),
+  extensionPath: extensionRoot,
   extensionUri: Uri.file(path.resolve(__dirname, "..")),
   subscriptions: [],
   globalState: { get: () => undefined, update: () => Promise.resolve() },
@@ -390,6 +422,70 @@ const assistantTurn = await view.waitFor(
 );
 const text = JSON.stringify(assistantTurn.event.message);
 check("reply contains the expected token", text.includes("host-smoke-ok"), text.slice(0, 200));
+
+/* ------------------------------------------------------------------ resources, reload, native commands */
+
+view.send({ type: "command", name: "getResources" });
+const resourcesEvent = await view.waitFor(message => message.type === "resources", "resources report", 20_000);
+check(
+  "the worker reports what Pi loaded",
+  Array.isArray(resourcesEvent.resources.extensions) && Array.isArray(resourcesEvent.resources.prompts),
+  `extensions=${resourcesEvent.resources.extensions.length} prompts=${resourcesEvent.resources.prompts.length} errors=${resourcesEvent.resources.errors.length}`,
+);
+
+const levelState = await view.waitFor(message => message.type === "state" && message.state.availableThinkingLevels?.length, "state reporting available thinking levels", 20_000);
+const levels = levelState.state.availableThinkingLevels;
+check("the worker says which levels this model really has", levels.includes(levelState.state.thinkingLevel), `current=${levelState.state.thinkingLevel} available=${levels.join(",")}`);
+const other = levels.find(level => level !== levelState.state.thinkingLevel);
+if (other) {
+  view.send({ type: "command", name: "setThinkingLevel", payload: { level: other } });
+  const changed = await view.waitFor(message => message.type === "state" && message.state.thinkingLevel === other, `state after switching to ${other}`, 20_000);
+  check("a command with a payload reaches the worker and changes the session", changed.state.thinkingLevel === other);
+} else {
+  check("this model exposes one level, so there is nothing to switch", levels.length === 1, levels.join(","));
+}
+
+view.send({ type: "hostCommand", name: "amulet.selectModel" });
+await new Promise(resolve => setTimeout(resolve, 200));
+check("the webview can drive native editor commands", executed.includes("amulet.selectModel"), executed.join(", "));
+
+await registered.commands.get("amulet.manageExtensions")();
+await new Promise(resolve => setTimeout(resolve, 500));
+check("the resources panel opens", panel?.viewType === "amulet.manage", panel?.viewType);
+check(
+  "it renders a locked-down report of what loaded",
+  /Content-Security-Policy/.test(panel?.webview.html ?? "") && /nonce-/.test(panel?.webview.html ?? "") && /<b>/.test(panel?.webview.html ?? "") && /Reload Pi config/.test(panel?.webview.html ?? ""),
+  `${(panel?.webview.html ?? "").length} characters of html`,
+);
+
+const modelRefreshes = view.messages.filter(message => message.type === "models").length;
+await registered.commands.get("amulet.reloadPi")();
+check("reload asks before interrupting anything", /Reload Pi config\?/.test(lastWarning), lastWarning);
+
+// The user cancelled above, so nothing should have been reloaded; now accept.
+const cancelledRefreshes = view.messages.filter(message => message.type === "models").length;
+check("a cancelled reload changes nothing", cancelledRefreshes === modelRefreshes, `${modelRefreshes} -> ${cancelledRefreshes}`);
+
+const beforeReload = view.messages.filter(message => message.type === "toast").length;
+view.send({ type: "command", name: "reload" });
+const reloadToast = await view.waitFor(message => message.type === "toast" && /Pi config reloaded/.test(message.message), "reload confirmation", 30_000);
+check("reload confirms when it succeeds", Boolean(reloadToast));
+const refreshed = await view.waitFor(
+  message => message.type === "models" && view.messages.filter(m => m.type === "models").length > beforeReload,
+  "model list refreshed after reload",
+  30_000,
+);
+check("reload refreshes what it can change", Boolean(refreshed));
+
+const statesBefore = view.messages.filter(message => message.type === "state").length;
+quickPickChoice = { label: "current session", session: { path: levelState.state.sessionFile } };
+await registered.commands.get("amulet.openSession")();
+await new Promise(resolve => setTimeout(resolve, 400));
+check(
+  "a session opened from the palette also updates the chat header",
+  view.messages.filter(message => message.type === "state").length > statesBefore,
+  `${statesBefore} -> ${view.messages.filter(message => message.type === "state").length} state events`,
+);
 
 check("no error dialog shown", lastError === "", lastError);
 

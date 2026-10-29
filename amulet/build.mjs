@@ -2,14 +2,20 @@
  * Build: three bundles, because the product has three execution contexts.
  *
  *   extension.cjs  CommonJS, `vscode` external        (extension host, Electron Node)
- *   worker.mjs     ESM, deps left external         (plain Node 22, runs the Pi SDK; it is ESM-only)
+ *   worker.mjs     ESM, everything vendored          (plain Node 22, runs the Pi SDK; it is ESM-only)
  *   webview.js     ESM for the browser               (no Node, no deps)
  *
- * The worker keeps its dependencies external: the Pi SDK is ESM-only, ships native prebuilds,
- * wasm and a CLI entry that must stay resolvable next to node_modules.
+ * The worker bundles the Pi SDK and its whole dependency graph, so a .vsix ships one file instead
+ * of a node_modules tree. The exception is `@silvia-odwyer/photon-node`: it is loaded dynamically
+ * and needs its .wasm beside it, so it stays external and ships as a real package (the payload
+ * does the same with its `pi-sdk-assets` folder).
  */
 import { build, context } from "esbuild";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir, unlink } from "node:fs/promises";
+import { join } from "node:path";
+
+/** Packages that cannot be inlined: they resolve files relative to their own directory at runtime. */
+const RUNTIME_EXTERNAL = ["@silvia-odwyer/photon-node"];
 
 const watch = process.argv.includes("--watch");
 const minify = process.argv.includes("--minify");
@@ -31,7 +37,17 @@ const targets = [
     outfile: "dist/worker.mjs",
     format: "esm",
     platform: "node",
-    packages: "external",
+    keepNames: true,
+    // Vendored CommonJS (cross-spawn and friends) calls require() for node builtins. In ESM output
+    // esbuild routes those through a shim that prefers a `require` binding in scope, so give it one.
+    banner: {
+      js: [
+        "import { createRequire as __amuletCreateRequire } from \"node:module\";",
+        "const require = __amuletCreateRequire(import.meta.url);",
+      ].join("\n"),
+    },
+    // `vscode` is not used here, but a stray import would otherwise fail silently at build time.
+    external: ["vscode", ...RUNTIME_EXTERNAL],
   },
   {
     ...shared,
@@ -50,4 +66,15 @@ for (const target of targets) {
 await mkdir("dist", { recursive: true });
 await copyFile("src/webview/webview.css", "dist/webview.css");
 
-if (!watch) console.log("built dist/extension.cjs, dist/worker.mjs, dist/webview.js, dist/webview.css");
+/**
+ * A minified build emits no source maps, so the ones a previous dev build left behind would ship as
+ * dead weight in the .vsix - and a stale dist/worker.cjs from an older iteration would look current.
+ */
+if (!watch) {
+  const keep = minify ? new Set(["extension.cjs", "worker.mjs", "webview.js", "webview.css"]) : null;
+  for (const entry of await readdir("dist")) {
+    if (keep && !keep.has(entry)) await unlink(join("dist", entry));
+  }
+}
+
+console.log(`built dist/extension.cjs, dist/worker.mjs, dist/webview.js, dist/webview.css${minify ? " (minified)" : ""}`);

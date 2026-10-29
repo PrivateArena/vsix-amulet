@@ -5,6 +5,7 @@
  */
 import type { HostEvent, ContentBlock, TranscriptMessage, WebviewRequest } from "../shared/protocol.js";
 import { parseContextBlock, type ContextDraft } from "../shared/contextBlock.js";
+import { summarizeToolCall, type ToolCard } from "../shared/toolSummary.js";
 import { ContextChips, MentionPicker, readImageFile, type PendingImage } from "./composer.js";
 
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState(): unknown; setState(state: unknown): void };
@@ -22,7 +23,10 @@ interface Item {
   toolName?: string;
   toolCallId?: string;
   toolState?: "running" | "done" | "error";
-  toolResult?: string;
+  /** Raw tool result as it crossed the IPC boundary; the summariser decides what to show. */
+  toolResult?: unknown;
+  /** Override of the default expand state, set by clicking the card. */
+  expanded?: boolean;
   args?: Record<string, unknown>;
   meta?: string;
   error?: string;
@@ -33,6 +37,8 @@ interface ViewModel {
   statusText: string;
   busy: boolean;
   modelName: string;
+  thinkingLevel: string;
+  sessionName: string;
   contextPercent: number;
   queue: string[];
 }
@@ -41,7 +47,16 @@ const vscode = acquireVsCodeApi();
 const root = document.querySelector<HTMLDivElement>("#app");
 if (!root) throw new Error("Amulet webview mounted without #app");
 
-const model: ViewModel = { items: [], statusText: "Starting the agent…", busy: false, modelName: "—", contextPercent: 0, queue: [] };
+const model: ViewModel = {
+  items: [],
+  statusText: "Starting the agent…",
+  busy: false,
+  modelName: "—",
+  thinkingLevel: "",
+  sessionName: "",
+  contextPercent: 0,
+  queue: [],
+};
 let composerText = "";
 let itemSequence = 0;
 let settings = { pasteBadgeThreshold: 700, attachSelectionOnFocus: true };
@@ -223,9 +238,10 @@ function applyMessage(message: HostEvent): void {
       return;
     case "state":
       model.modelName = message.state.model ? `${message.state.model.name}` : "no model";
+      model.thinkingLevel = message.state.thinkingLevel ?? "";
+      model.sessionName = message.state.sessionName ?? "";
       model.contextPercent = message.state.contextUsage?.percent ?? 0;
       model.busy = message.state.isStreaming;
-      model.statusText = message.state.sessionName ?? "Session";
       model.queue = [];
       return;
     case "workerStatus":
@@ -288,7 +304,13 @@ function applyEvent(event: Extract<HostEvent, { type: "event" }>["event"]): void
       const item = model.items.find(candidate => candidate.toolCallId === event.toolCallId);
       if (!item) return;
       item.toolState = event.isError ? "error" : "done";
-      item.toolResult = summarizeResult(event.result);
+      item.toolResult = event.result;
+      return;
+    }
+    case "tool_execution_update": {
+      // Partial output of a call that is still running: long bashes and reads should not look stuck.
+      const item = model.items.find(candidate => candidate.toolCallId === event.toolCallId);
+      if (item) item.toolResult = event.partialResult;
       return;
     }
     case "queue_update":
@@ -331,7 +353,7 @@ function replaceMessage(message: TranscriptMessage): void {
     const item = model.items.find(candidate => candidate.toolCallId === message.toolCallId);
     if (item) {
       item.toolState = message.isError ? "error" : "done";
-      item.toolResult = projected.blocks.map(blockText).join("\n");
+      item.toolResult = projected.blocks;
     }
     return;
   }
@@ -395,9 +417,13 @@ function render(): void {
   const stickToBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 40;
   transcript.replaceChildren(...model.items.map(renderItem));
   if (stickToBottom) transcript.scrollTop = transcript.scrollHeight;
-  statusLine.textContent = model.busy
-    ? `${model.modelName} · working`
-    : `${model.modelName} · ${Math.round(model.contextPercent)}% context`;
+  const facts = [
+    model.modelName,
+    model.thinkingLevel ? `${model.thinkingLevel} thinking` : "",
+    model.busy ? "working" : `${Math.round(model.contextPercent)}% context`,
+  ].filter(Boolean);
+  statusLine.textContent = facts.join(" · ");
+  statusLine.title = model.sessionName || "Current session";
   stopButton.hidden = !model.busy;
   sendButton.hidden = model.busy;
   renderComposer();
@@ -451,16 +477,71 @@ function renderItem(item: Item): HTMLElement {
   return wrapper;
 }
 
+/**
+ * One tool call as a card: a line that says what ran and what came back, expandable to the output.
+ *
+ * All the deciding happens in shared/toolSummary.ts — this only turns the summary into DOM, so the
+ * same rules could render a card in a log view or a notification without a second implementation.
+ */
 function renderTool(item: Item, wrapper: HTMLElement): HTMLElement {
-  const args = item.args ? ` ${toolSummary(item.toolName ?? "", item.args)}` : "";
-  wrapper.appendChild(line("tool-title", `${item.toolState === "error" ? "✕" : item.toolState === "done" ? "✓" : "…"} ${item.toolName}${args}`));
-  if (item.toolResult) {
-    const body = document.createElement("pre");
-    body.className = "tool-result";
-    body.textContent = clip(item.toolResult);
-    wrapper.appendChild(body);
+  const card = summarizeToolCall(item.toolName ?? "", item.args ?? {}, item.toolResult, item.toolState === "error");
+  const state = item.toolState ?? "running";
+  // A finished call is collapsed because a turn has dozens of them; a running one and a failed one
+  // open themselves, because those are the two cases where the body is the point.
+  const open = item.expanded ?? state !== "done";
+  wrapper.className = `${wrapper.className} tool-card tool-${state}${card.failed ? " tool-failed" : ""}`;
+
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "tool-head";
+  const icon = document.createElement("span");
+  icon.className = "tool-state";
+  icon.textContent = state === "error" ? "✕" : state === "done" ? "✓" : "●";
+  const title = document.createElement("span");
+  title.className = "tool-name";
+  title.textContent = card.title;
+  head.appendChild(icon);
+  head.appendChild(title);
+  if (card.meta) {
+    const meta = document.createElement("span");
+    meta.className = "tool-meta";
+    meta.textContent = card.meta;
+    head.appendChild(meta);
+  }
+
+  if (card.body) {
+    head.title = open ? "Collapse this call" : "Show what this call returned";
+    head.addEventListener("click", () => {
+      item.expanded = !open;
+      render();
+    });
+    wrapper.appendChild(head);
+    if (open) wrapper.appendChild(cardBody(card));
+  } else {
+    head.disabled = true;
+    head.title = card.title;
+    wrapper.appendChild(head);
   }
   return wrapper;
+}
+
+function cardBody(card: ToolCard): HTMLElement {
+  if (card.bodyKind !== "diff") {
+    const pre = document.createElement("pre");
+    pre.className = `tool-body${card.bodyKind === "command" ? " tool-command" : ""}`;
+    pre.textContent = card.body ?? "";
+    return pre;
+  }
+  // A diff gets per-line colour: a wall of grey text with plus signs in it is not a diff.
+  const wrap = document.createElement("div");
+  wrap.className = "tool-body tool-diff";
+  for (const row of (card.body ?? "").split("\n")) {
+    const lineNode = document.createElement("span");
+    lineNode.className = row.startsWith("+") ? "diff-add" : row.startsWith("-") ? "diff-del" : "diff-ctx";
+    lineNode.textContent = row;
+    wrap.appendChild(lineNode);
+  }
+  return wrap;
 }
 
 function renderComposer(): void {
@@ -487,49 +568,6 @@ function line(className: string, text: string): HTMLElement {
 function errorLine(text: string): HTMLElement {
   const node = line("error", text);
   return node;
-}
-
-function blockText(block: ContentBlock): string {
-  switch (block.type) {
-    case "text":
-      return block.text;
-    case "thinking":
-      return block.thinking;
-    case "toolCall":
-      return `${block.name} ${JSON.stringify(block.arguments)}`;
-  }
-}
-
-function summarizeResult(result: unknown): string {
-  const value = result as { content?: unknown };
-  if (Array.isArray(value?.content)) {
-    return value.content
-      .map(part => (part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : JSON.stringify(part)))
-      .join("\n");
-  }
-  return typeof result === "string" ? result : JSON.stringify(result);
-}
-
-/** One-line description of a tool call, mirroring what the editor shows elsewhere. */
-function toolSummary(name: string, args: Record<string, unknown>): string {
-  switch (name) {
-    case "read":
-      return String(args.path ?? args.file_path ?? "");
-    case "edit":
-    case "write":
-      return String(args.path ?? args.file_path ?? "");
-    case "bash":
-      return String(args.command ?? "").slice(0, 120);
-    case "grep":
-    case "find":
-      return String(args.pattern ?? args.query ?? "");
-    default:
-      return "";
-  }
-}
-
-function clip(text: string, max = 4000): string {
-  return text.length > max ? `${text.slice(0, max)}\n… truncated …` : text;
 }
 
 function describeStatus(status: string, detail?: string): string {

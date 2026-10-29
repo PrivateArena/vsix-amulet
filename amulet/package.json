@@ -117,6 +117,16 @@
         "title": "Open Chat",
         "category": "Amulet",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "amulet.manageExtensions",
+        "title": "Amulet: Pi Extensions and Skills",
+        "icon": "$(extensions)"
+      },
+      {
+        "command": "amulet.reloadPi",
+        "title": "Amulet: Reload Pi Config",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -140,6 +150,36 @@
           "command": "amulet.openChat",
           "when": "view == amulet.chatView",
           "group": "navigation"
+        },
+        {
+          "command": "amulet.selectThinkingLevel",
+          "when": "view == amulet.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "amulet.manageExtensions",
+          "when": "view == amulet.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "amulet.reloadPi",
+          "when": "view == amulet.chatView",
+          "group": "1_commands"
+        },
+        {
+          "command": "amulet.compact",
+          "when": "view == amulet.chatView",
+          "group": "1_commands"
+        },
+        {
+          "command": "amulet.restartWorker",
+          "when": "view == amulet.chatView",
+          "group": "1_commands"
+        },
+        {
+          "command": "amulet.showLogs",
+          "when": "view == amulet.chatView",
+          "group": "1_commands"
         }
       ],
       "editor/context": [
@@ -272,9 +312,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "test:worker": "node test/smoke-worker.mjs",
     "test:host": "node test/host-activate.cjs",
-    "check": "npm run typecheck && npm run build && npm run test:context && npm run test:worker && npm run test:host",
+    "check": "npm run typecheck && npm run build && npm run test:context && npm run test:tools && npm run test:worker && npm run test:host",
     "vscode:prepublish": "node build.mjs --minify",
-    "test:context": "node test/context-block.mjs"
+    "test:context": "node test/context-block.mjs",
+    "vsix": "vsce package --allow-missing-repository --out dist",
+    "test:vsix": "node test/package-vsix.mjs",
+    "verify": "npm run check && npm run vsix && npm run test:vsix",
+    "test:tools": "node test/tool-summary.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.4.0"
@@ -282,6 +326,7 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.109.0",
+    "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0"
   }

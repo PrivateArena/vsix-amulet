@@ -100,10 +100,68 @@ body {
   overflow-wrap: anywhere;
 }
 
-.tool-title {
+/* ---------------------------------------------------------------- tool cards */
+
+.item-tool {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The whole header is the click target: a card is either one line or a line plus its output. */
+.tool-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-head:disabled {
+  cursor: default;
+}
+
+.tool-head:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.tool-state {
+  flex: none;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.tool-done .tool-state {
+  color: var(--vscode-charts-green);
+}
+
+.tool-error .tool-state {
+  color: var(--vscode-errorForeground);
+}
+
+.tool-name {
+  flex: 1 1 auto;
   font-family: var(--mono);
   font-size: 0.9em;
-  color: var(--vscode-textLink-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-meta {
+  flex: none;
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.tool-failed .tool-name,
+.tool-failed .tool-meta {
+  color: var(--vscode-errorForeground);
 }
 
 .tool-inline {
@@ -112,14 +170,43 @@ body {
   color: var(--vscode-descriptionForeground);
 }
 
-.tool-result {
-  margin: 0.35rem 0 0;
+.tool-body {
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  border-top: 1px solid var(--vscode-panel-border, transparent);
   font-family: var(--mono);
   font-size: 0.85em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 16rem;
+  max-height: 18rem;
   overflow-y: auto;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* A command is what ran, so it is not painted as an afterthought of the output. */
+.tool-command {
+  color: var(--vscode-textPreformat-foreground);
+}
+
+.tool-diff {
+  display: block;
+  padding: 0;
+}
+
+.tool-diff span {
+  display: block;
+  padding: 0 0.55rem;
+}
+
+.diff-add {
+  background: var(--vscode-diffEditor-insertedTextBackground, rgba(0, 180, 90, 0.14));
+}
+
+.diff-del {
+  background: var(--vscode-diffEditor-removedTextBackground, rgba(220, 60, 60, 0.14));
+}
+
+.diff-ctx {
   color: var(--vscode-descriptionForeground);
 }
 

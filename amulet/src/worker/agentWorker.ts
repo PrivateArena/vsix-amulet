@@ -22,6 +22,7 @@ import type {
   WorkerUplink,
 } from "../shared/protocol.js";
 import { FAIL, OK } from "../shared/protocol.js";
+import { readResources } from "./resources.js";
 
 /** Loose view of an SDK session event; the union is wide and version-sensitive. */
 type AnyEvent = { type: string; [key: string]: any };
@@ -124,6 +125,7 @@ export class AgentWorker {
       cwd: this.config.cwd,
       model: model ? this.summarize(model as never) : undefined,
       thinkingLevel: session.thinkingLevel ?? "medium",
+      availableThinkingLevels: session.getAvailableThinkingLevels(),
       isStreaming: session.isStreaming,
       isCompacting: session.isCompacting,
       isRetrying: session.isRetrying,
@@ -380,6 +382,14 @@ export class AgentWorker {
         case "setAutoRetry":
           this.active.setAutoRetryEnabled(command.enabled);
           return void this.host.send(OK(id, type));
+        case "getResources":
+          return void this.host.send(OK(id, type, readResources(this.active)));
+        case "reload": {
+          // Re-reads extensions, skills, prompts, themes and context files in place. The host
+          // refreshes the transcript and model list afterwards, because those can change too.
+          await this.active.reload();
+          return void this.host.send(OK(id, type, { state: this.snapshot() }));
+        }
         case "shutdown":
           await this.teardown();
           return void this.host.send(OK(id, type));
@@ -401,6 +411,7 @@ export class AgentWorker {
       modified: (info.modified instanceof Date ? info.modified.toISOString() : String(info.modified)),
       messageCount: info.messageCount,
       firstMessage: info.firstMessage,
+      current: Boolean(this.session?.sessionFile) && info.path === this.session?.sessionFile,
     }));
   }
 }
