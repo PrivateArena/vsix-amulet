@@ -9,6 +9,7 @@
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import { ChatViewProvider } from "./chatViewProvider.js";
+import { ContextBridge } from "./contextBridge.js";
 import { AgentWorkerClient, resolveWorkerEntry } from "./workerClient.js";
 import type { SessionState, ThinkingLevel, WorkerCommand, WorkerConfig } from "../shared/protocol.js";
 import { THINKING_LEVELS } from "../shared/protocol.js";
@@ -23,22 +24,29 @@ class AmuletRuntime {
   /** One in-flight start per cwd, shared by every caller. */
   private readonly booting = new Map<string, Promise<AgentWorkerClient | undefined>>();
   private readonly output: vscode.OutputChannel;
+  private readonly context: ContextBridge;
   private readonly chatView: ChatViewProvider;
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  constructor(private readonly extensionContext: vscode.ExtensionContext) {
     this.output = vscode.window.createOutputChannel("Amulet Agent", { log: true });
+    this.context = new ContextBridge({
+      getCwd: () => this.config()?.cwd,
+      post: event => this.chatView.post(event),
+    });
     this.chatView = new ChatViewProvider(
-      context.extensionUri,
+      extensionContext.extensionUri,
       () => this.ensureWorker(),
       () => void this.ensureWorker(),
+      this.context,
     );
 
-    context.subscriptions.push(
+    extensionContext.subscriptions.push(
       this.output,
       this.chatView,
       vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, this.chatView, {
         webviewOptions: { retainContextWhenHidden: true },
       }),
+      vscode.window.onDidChangeActiveTextEditor(() => this.context.onActiveEditorChanged()),
       vscode.commands.registerCommand("amulet.newSession", () => this.runCommand({ id: randomUUID(), type: "newSession" })),
       vscode.commands.registerCommand("amulet.compact", () => this.runCommand({ id: randomUUID(), type: "compact" })),
       vscode.commands.registerCommand("amulet.abort", () => this.runCommand({ id: randomUUID(), type: "abort" })),
@@ -47,6 +55,13 @@ class AmuletRuntime {
       vscode.commands.registerCommand("amulet.selectThinkingLevel", () => this.pickThinkingLevel()),
       vscode.commands.registerCommand("amulet.showLogs", () => this.output.show()),
       vscode.commands.registerCommand("amulet.restartWorker", () => this.restartWorker()),
+      vscode.commands.registerCommand("amulet.attachSelection", () => this.context.attachSelection()),
+      vscode.commands.registerCommand("amulet.attachActiveFile", () => this.context.attachActiveFile()),
+      vscode.commands.registerCommand("amulet.attachFile", (uri?: vscode.Uri, uris?: readonly vscode.Uri[]) =>
+        this.context.attachFiles(uris?.length ? uris : uri ? [uri] : undefined),
+      ),
+      vscode.commands.registerCommand("amulet.attachProblems", () => this.context.attachProblems()),
+      vscode.commands.registerCommand("amulet.openChat", () => vscode.commands.executeCommand("workbench.view.extension.amulet")),
     );
   }
 
@@ -96,7 +111,7 @@ class AmuletRuntime {
   private async boot(cwd: string, config: WorkerConfig): Promise<AgentWorkerClient | undefined> {
     let client: AgentWorkerClient;
     try {
-      client = new AgentWorkerClient(resolveWorkerEntry(this.context.extensionPath), config, {
+      client = new AgentWorkerClient(resolveWorkerEntry(this.extensionContext.extensionPath), config, {
         maxOldSpaceMB: vscode.workspace.getConfiguration("amulet").get<number>("worker.maxOldSpaceMB", 0),
       });
     } catch (error) {

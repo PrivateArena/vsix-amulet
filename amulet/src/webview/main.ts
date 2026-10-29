@@ -3,7 +3,9 @@
  * It never touches VS Code APIs beyond `acquireVsCodeApi`, which keeps the whole UI portable
  * (the same bundle runs in a chat editor tab and in a standalone panel).
  */
-import type { HostEvent, ContentBlock, TranscriptMessage } from "../shared/protocol.js";
+import type { HostEvent, ContentBlock, TranscriptMessage, WebviewRequest } from "../shared/protocol.js";
+import { parseContextBlock, type ContextDraft } from "../shared/contextBlock.js";
+import { ContextChips, MentionPicker, readImageFile, type PendingImage } from "./composer.js";
 
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState(): unknown; setState(state: unknown): void };
 
@@ -14,6 +16,8 @@ interface Item {
   kind: "user" | "assistant" | "tool" | "system";
   blocks: Block[];
   streaming?: boolean;
+  /** Chips the message was sent with, rendered above the text. */
+  context?: string[];
   /** tool items */
   toolName?: string;
   toolCallId?: string;
@@ -38,16 +42,19 @@ const root = document.querySelector<HTMLDivElement>("#app");
 if (!root) throw new Error("Amulet webview mounted without #app");
 
 const model: ViewModel = { items: [], statusText: "Starting the agent…", busy: false, modelName: "—", contextPercent: 0, queue: [] };
-let draft = "";
+let composerText = "";
 let itemSequence = 0;
+let settings = { pasteBadgeThreshold: 700, attachSelectionOnFocus: true };
 
 /* ------------------------------------------------------------------ shell */
 
 root.innerHTML = `
   <div class="transcript" id="transcript" tabindex="0"></div>
-  <div class="composer">
+  <div class="composer" id="composer">
     <div class="queue" id="queue" hidden></div>
-    <textarea id="input" rows="3" placeholder="Ask the agent. Enter to send, Shift+Enter for a newline."></textarea>
+    <div class="chips" id="chips" hidden></div>
+    <div class="picker" id="picker" hidden></div>
+    <textarea id="input" rows="3" placeholder="Ask the agent. @ to attach a file, Enter to send, Shift+Enter for a newline."></textarea>
     <div class="composer-bar">
       <button id="send" class="primary" type="button">Send</button>
       <button id="stop" type="button" hidden>Stop</button>
@@ -55,38 +62,144 @@ root.innerHTML = `
       <span class="status" id="status"></span>
     </div>
   </div>
+  <button id="quote" class="quote-button" type="button" hidden>Quote in chat</button>
 `;
 
 const transcript = element<HTMLDivElement>("transcript");
+const composer = element<HTMLDivElement>("composer");
 const input = element<HTMLTextAreaElement>("input");
+const chipsRow = element<HTMLDivElement>("chips");
+const pickerPopup = element<HTMLDivElement>("picker");
+const quoteButton = element<HTMLButtonElement>("quote");
 const sendButton = element<HTMLButtonElement>("send");
 const stopButton = element<HTMLButtonElement>("stop");
 const statusLine = element<HTMLSpanElement>("status");
 const queueLine = element<HTMLDivElement>("queue");
 
+/** Everything the context layer needs from the rest of the app. */
+const bridge = {
+  post: (message: WebviewRequest) => vscode.postMessage(message),
+  toast: (message: string) => pushSystem(message),
+};
+
+const chips = new ContextChips(chipsRow, bridge);
+const picker = new MentionPicker(input, pickerPopup, bridge);
+
 sendButton.addEventListener("click", () => submit());
 stopButton.addEventListener("click", () => command("abort"));
 input.addEventListener("keydown", event => {
+  if (picker.onKeyDown(event)) return;
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     submit();
   }
 });
 input.addEventListener("input", () => {
-  draft = input.value;
+  composerText = input.value;
+  picker.sync();
   renderComposer();
+});
+input.addEventListener("keyup", () => picker.sync());
+input.addEventListener("click", () => picker.sync());
+input.addEventListener("focus", () => bridge.post({ type: "composerFocused" }));
+input.addEventListener("paste", event => void onPaste(event));
+
+// VS Code keeps a drag for itself until Shift is held; the guide tells the user, so does the drop zone.
+composer.addEventListener("dragover", event => {
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  composer.classList.add("is-dragging");
+});
+composer.addEventListener("dragleave", () => composer.classList.remove("is-dragging"));
+composer.addEventListener("drop", event => void onDrop(event));
+
+transcript.addEventListener("mouseup", () => setTimeout(refreshQuoteButton, 0));
+quoteButton.addEventListener("mousedown", event => {
+  event.preventDefault();
+  quoteSelection();
 });
 
 vscode.postMessage({ type: "ready" });
+
+/* ------------------------------------------------------------------ composer input */
+
+async function onPaste(event: ClipboardEvent): Promise<void> {
+  const files = [...(event.clipboardData?.files ?? [])];
+  const images = files.filter(file => file.type.startsWith("image/"));
+  if (images.length) {
+    event.preventDefault();
+    for (const file of images) {
+      const image = await readImageFile(file);
+      if (image) chips.addImage(image);
+      else bridge.toast("That image could not be read.");
+    }
+    return;
+  }
+  const pasted = event.clipboardData?.getData("text/plain") ?? "";
+  // A long paste becomes a badge so the message stays readable; the whole text is still sent, as a quote.
+  if (pasted.length > settings.pasteBadgeThreshold) {
+    event.preventDefault();
+    chips.add({ quotes: [{ text: pasted, origin: "pasted" }] });
+  }
+}
+
+async function onDrop(event: DragEvent): Promise<void> {
+  composer.classList.remove("is-dragging");
+  event.preventDefault();
+  const transfer = event.dataTransfer;
+  if (!transfer) return;
+  const uris = (transfer.getData("text/uri-list") ?? "")
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith("#"));
+  const files = [...transfer.files];
+  const images = files.filter(file => file.type.startsWith("image/"));
+  for (const file of images) {
+    const image = await readImageFile(file);
+    if (image) chips.addImage(image);
+  }
+  if (uris.length) bridge.post({ type: "attachUris", uris });
+  else if (!images.length) bridge.toast("Drag files from the Explorer while holding Shift.");
+}
+
+let pendingQuote: { text: string; source: string } | undefined;
+
+/** Show the Quote button only for a selection made inside one message. */
+function refreshQuoteButton(): void {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) return void hideQuoteButton();
+  const anchor = selection.anchorNode?.parentElement?.closest?.("[data-item-id]");
+  const focus = selection.focusNode?.parentElement?.closest?.("[data-item-id]");
+  if (!anchor || anchor !== focus) return void hideQuoteButton();
+  pendingQuote = { text: selection.toString(), source: (anchor as HTMLElement).dataset.itemId ?? "" };
+  const range = selection.getRangeAt(0).getBoundingClientRect();
+  quoteButton.style.top = `${Math.max(4, range.top - 30)}px`;
+  quoteButton.style.left = `${Math.max(4, range.left)}px`;
+  quoteButton.hidden = false;
+}
+function hideQuoteButton(): void {
+  quoteButton.hidden = true;
+  pendingQuote = undefined;
+}
+
+function quoteSelection(): void {
+  if (!pendingQuote) return;
+  chips.add({ quotes: [{ text: pendingQuote.text, source: pendingQuote.source }] });
+  window.getSelection()?.removeAllRanges();
+  hideQuoteButton();
+  input.focus();
+}
 
 /* ------------------------------------------------------------------ commands */
 
 function submit(): void {
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && chips.empty) return;
+  const { draft: contextDraft, images } = chips.drain();
   input.value = "";
-  draft = "";
-  command("prompt", { text });
+  composerText = "";
+  picker.close();
+  vscode.postMessage({ type: "prompt", text, context: contextDraft, images });
   renderComposer();
 }
 
@@ -123,6 +236,15 @@ function applyMessage(message: HostEvent): void {
       return;
     case "toast":
       pushSystem(message.message);
+      return;
+    case "contextAppend":
+      chips.add(message.fragment);
+      return;
+    case "fileResults":
+      picker.onResults(message.requestId, message.items);
+      return;
+    case "composerSettings":
+      settings = { pasteBadgeThreshold: message.pasteBadgeThreshold, attachSelectionOnFocus: message.attachSelectionOnFocus };
       return;
     case "event":
       return applyEvent(message.event);
@@ -227,7 +349,28 @@ function fromTranscript(message: TranscriptMessage): Item {
   const blocks: Block[] = message.content.map((block, index) => ({ ...block, id: `m${message.id}-${index}` } as Block));
   const kind: Item["kind"] = message.role === "user" ? "user" : message.role === "assistant" ? "assistant" : "system";
   const meta = message.role === "assistant" && message.model ? `${message.responseModel ?? message.model}` : undefined;
+  if (message.role === "user") {
+    // A sent message carries its context block; show it as chips over the user's own words, the
+    // same way the composer did, rather than as a wall of quoted source.
+    const raw = blocks.filter(block => block.type === "text").map(block => (block as { text: string }).text).join("\n");
+    const { draft: sentDraft, userText } = parseContextBlock(raw);
+    const labels = describeContext(sentDraft);
+    const others = blocks.filter(block => block.type !== "text");
+    const shown: Block[] = userText.trim() ? [{ type: "text", text: userText, id: `m${message.id}-text` }, ...others] : others;
+    return { id: message.id, kind, blocks: shown, context: labels.length ? labels : undefined, meta, error: message.errorMessage };
+  }
   return { id: message.id, kind, blocks, meta, error: message.errorMessage };
+}
+
+function describeContext(draft: ContextDraft): string[] {
+  const labels = [
+    ...draft.files.map(label => `@${label}`),
+    ...draft.selections.map(selection => `@${selection.path}:${selection.lineRange} quoted`),
+    ...draft.quotes.map(quote => `“${quote.text.replace(/\s+/g, " ").trim().slice(0, 42)}”`),
+    ...draft.problems.map(problem => `${problem.severity} ${problem.path}:${problem.line}`),
+    ...draft.notes.map(note => `note for ${note.path}`),
+  ];
+  return labels;
 }
 
 function appendBlock(item: Item, id: string, type: ContentBlock["type"], patch: Record<string, unknown>): void {
@@ -263,7 +406,20 @@ function render(): void {
 function renderItem(item: Item): HTMLElement {
   const wrapper = document.createElement("section");
   wrapper.className = `item item-${item.kind}${item.streaming ? " is-streaming" : ""}`;
+  wrapper.dataset.itemId = item.id;
   if (item.kind === "tool") return renderTool(item, wrapper);
+
+  if (item.context?.length) {
+    const row = document.createElement("div");
+    row.className = "sent-context";
+    for (const label of item.context) {
+      const chipSpan = document.createElement("span");
+      chipSpan.className = "chip chip-sent";
+      chipSpan.textContent = label;
+      row.appendChild(chipSpan);
+    }
+    wrapper.appendChild(row);
+  }
 
   for (const block of item.blocks) {
     const node = document.createElement(block.type === "thinking" ? "details" : "div");
@@ -308,7 +464,7 @@ function renderTool(item: Item, wrapper: HTMLElement): HTMLElement {
 }
 
 function renderComposer(): void {
-  if (input.value !== draft) input.value = draft;
+  if (input.value !== composerText) input.value = composerText;
   queueLine.hidden = model.queue.length === 0;
   queueLine.textContent = model.queue.length ? `Queued: ${model.queue.join(" · ")}` : "";
 }

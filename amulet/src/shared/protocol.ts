@@ -9,6 +9,8 @@
  * from a dependency can never corrupt the stream. Command/response correlation is by `id`.
  */
 
+import type { ContextDraft, ContextFragment } from "./contextBlock.js";
+
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -232,7 +234,19 @@ export type WorkerUplink =
 
 export type WebviewRequest =
   | { type: "command"; name: WorkerCommandType; payload?: Record<string, unknown> }
-  | { type: "ready" };
+  /** Sent with a prompt: the host renders this into the context block in front of the text. */
+  | { type: "prompt"; text: string; context?: ContextDraft; images?: ImageAttachment[]; streamingBehavior?: "steer" | "follow-up" }
+  | { type: "ready" }
+  /** The composer gained focus: auto-attach rules get their chance to add a chip. */
+  | { type: "composerFocused" }
+  /** A chip the user removed, so the host does not put the same one back. */
+  | { type: "contextDismissed"; labels: string[] }
+  /** The `@` picker needs candidates. */
+  | { type: "searchFiles"; requestId: string; query: string }
+  /** Files dropped onto the composer (VS Code hands the webview URIs, not contents). */
+  | { type: "attachUris"; uris: string[] }
+  /** A chip was clicked: reveal the file at the attached range. */
+  | { type: "openFile"; label: string };
 
 export type HostEvent =
   | { type: "event"; event: WorkerEvent }
@@ -241,4 +255,9 @@ export type HostEvent =
   | { type: "models"; models: ModelSummary[] }
   | { type: "sessions"; sessions: SessionListItem[] }
   | { type: "workerStatus"; status: "starting" | "ready" | "restarting" | "stopped" | "failed"; detail?: string }
-  | { type: "toast"; message: string; level: "info" | "warning" | "error" };
+  | { type: "toast"; message: string; level: "info" | "warning" | "error" }
+  /** Context collected in the editor (a command, an auto-attach) merged into the composer draft. */
+  | { type: "contextAppend"; fragment: ContextFragment }
+  | { type: "fileResults"; requestId: string; items: string[]; error?: string }
+  /** Host-side composer rules the UI has to honour, sent with the first handshake. */
+  | { type: "composerSettings"; pasteBadgeThreshold: number; attachSelectionOnFocus: boolean };

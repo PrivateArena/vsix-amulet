@@ -90,6 +90,33 @@
         "command": "amulet.restartWorker",
         "title": "Restart Agent Worker",
         "category": "Amulet"
+      },
+      {
+        "command": "amulet.attachSelection",
+        "title": "Add Selection to Chat",
+        "category": "Amulet",
+        "icon": "$(mention)"
+      },
+      {
+        "command": "amulet.attachActiveFile",
+        "title": "Add Current File to Chat",
+        "category": "Amulet"
+      },
+      {
+        "command": "amulet.attachFile",
+        "title": "Add File to Chat",
+        "category": "Amulet"
+      },
+      {
+        "command": "amulet.attachProblems",
+        "title": "Add Reported Problems to Chat",
+        "category": "Amulet"
+      },
+      {
+        "command": "amulet.openChat",
+        "title": "Open Chat",
+        "category": "Amulet",
+        "icon": "$(comment-discussion)"
       }
     ],
     "menus": {
@@ -108,6 +135,35 @@
           "command": "amulet.selectModel",
           "when": "view == amulet.chatView",
           "group": "navigation"
+        },
+        {
+          "command": "amulet.openChat",
+          "when": "view == amulet.chatView",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "amulet.attachSelection",
+          "when": "editorHasSelection",
+          "group": "navigation@100"
+        },
+        {
+          "command": "amulet.attachActiveFile",
+          "group": "navigation@101"
+        }
+      ],
+      "editor/lineNumber/context": [
+        {
+          "command": "amulet.attachActiveFile",
+          "group": "navigation@100"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "amulet.attachFile",
+          "when": "resourceScheme == file",
+          "group": "navigation@100"
         }
       ]
     },
@@ -121,6 +177,17 @@
         "command": "amulet.abort",
         "key": "alt+ctrl+s",
         "mac": "cmd+ctrl+s"
+      },
+      {
+        "command": "amulet.attachSelection",
+        "key": "ctrl+shift+'",
+        "mac": "cmd+shift+'",
+        "when": "editorTextFocus && editorHasSelection"
+      },
+      {
+        "command": "amulet.openChat",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e"
       }
     ],
     "configuration": {
@@ -175,6 +242,26 @@
           "type": "number",
           "default": 0,
           "markdownDescription": "Heap cap for the agent worker process, in MB. 0 leaves Node's default."
+        },
+        "amulet.context.attachSelectionOnFocus": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When you click into the message box, attach the lines selected in the editor. Removing the chip keeps it off until you select something else."
+        },
+        "amulet.context.attachActiveFile": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Attach the file you have open, following you as you switch files. Removing the chip keeps it off until you switch again."
+        },
+        "amulet.context.disableFileReferences": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Never send file paths or selected lines as context. The agent still reads files with its own tools."
+        },
+        "amulet.context.pasteBadgeThreshold": {
+          "type": "number",
+          "default": 700,
+          "markdownDescription": "Characters after which a paste is folded into a quote chip instead of being typed into the message."
         }
       }
     }
@@ -185,8 +272,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "test:worker": "node test/smoke-worker.mjs",
     "test:host": "node test/host-activate.cjs",
-    "check": "npm run typecheck && npm run build && npm run test:worker && npm run test:host",
-    "vscode:prepublish": "node build.mjs --minify"
+    "check": "npm run typecheck && npm run build && npm run test:context && npm run test:worker && npm run test:host",
+    "vscode:prepublish": "node build.mjs --minify",
+    "test:context": "node test/context-block.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.4.0"

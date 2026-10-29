@@ -1,14 +1,15 @@
 /**
  * Bridges the chat webview to the agent worker for one workspace folder.
  *
- * It is deliberately thin: it owns the webview lifecycle and the CSP, translates webview
- * requests into worker commands, and forwards worker traffic back. All transcript state
- * reconstruction lives in the webview so the two sides can evolve independently.
+ * It owns the webview lifecycle and the CSP, translates webview requests into worker commands,
+ * and forwards worker traffic back. Transcript reconstruction lives in the webview; the context
+ * block is assembled here, because text coming out of a webview is untrusted input.
  */
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
-import type { HostEvent, WorkerCommand } from "../shared/protocol.js";
+import type { HostEvent, SessionState, WebviewRequest } from "../shared/protocol.js";
 import type { AgentWorkerClient } from "./workerClient.js";
+import type { ContextBridge } from "./contextBridge.js";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   static readonly viewId = "amulet.chatView";
@@ -26,6 +27,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly getWorker: () => Promise<AgentWorkerClient | undefined>,
     /** Called when the view becomes visible, so the host can start the agent eagerly. */
     private readonly onVisible: () => void,
+    private readonly context: ContextBridge,
   ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -94,36 +96,62 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (this.viewReady) void this.syncTranscript();
   }
 
-  private async handleWebviewMessage(message: { type?: string; name?: string; payload?: Record<string, unknown> }): Promise<void> {
-    if (message?.type === "ready") {
-      this.viewReady = true;
-      for (const event of this.latest.values()) this.post(event);
-      await this.syncTranscript();
-      void this.refreshHeader();
-      return;
+  private async handleWebviewMessage(message: WebviewRequest): Promise<void> {
+    switch (message?.type) {
+      case "ready":
+        this.viewReady = true;
+        this.post({ type: "composerSettings", ...this.context.composerSettings });
+        for (const event of this.latest.values()) this.post(event);
+        await this.syncTranscript();
+        void this.refreshHeader();
+        return;
+      case "attachUris":
+        return this.context.attachUris(message.uris);
+      case "composerFocused":
+        return this.context.onComposerFocused();
+      case "contextDismissed":
+        return this.context.dismiss(message.labels);
+      case "searchFiles":
+        return this.context.search(message.requestId, message.query);
+      case "openFile":
+        return this.context.open(message.label);
+      case "prompt":
+        return this.sendPrompt(message);
+      case "command":
+        return this.runWorkerCommand(message.name);
+      default:
+        return;
     }
-    if (message?.type !== "command" || !message.name) return;
+  }
+
+  private async sendPrompt(message: Extract<import("../shared/protocol.js").WebviewRequest, { type: "prompt" }>): Promise<void> {
+    const text = message.text;
+    if (!text.trim() && !message.images?.length) return;
+    const worker = await this.getWorker();
+    if (!worker) return void this.post({ type: "toast", message: "The agent is not running for this workspace.", level: "error" });
+    // The block is assembled here, on the trusted side of the boundary, from validated pieces.
+    const fullText = await this.context.buildPromptText(text, message.context);    try {
+      const state = await worker.command<SessionState>({ id: randomUUID(), type: "getState" });
+      await worker.command({
+        id: randomUUID(),
+        type: "prompt",
+        text: fullText,
+        images: message.images,
+        streamingBehavior: state.isStreaming ? "steer" : undefined,
+      });
+    } catch (error) {
+      this.post({ type: "toast", message: error instanceof Error ? error.message : String(error), level: "error" });
+    }
+  }
+
+  private async runWorkerCommand(name: string): Promise<void> {
     const worker = await this.getWorker();
     if (!worker) {
       this.post({ type: "toast", message: "The agent is not running for this workspace.", level: "error" });
       return;
     }
-    const payload = message.payload ?? {};
     try {
-      switch (message.name) {
-        case "prompt": {
-          const text = String(payload.text ?? "");
-          if (!text.trim()) return;
-          const state = await worker.command<{ isStreaming: boolean }>({ id: randomUUID(), type: "getState" });
-          const command: WorkerCommand = {
-            id: randomUUID(),
-            type: "prompt",
-            text,
-            streamingBehavior: state.isStreaming ? "steer" : undefined,
-          };
-          await worker.command(command);
-          return;
-        }
+      switch (name) {
         case "abort":
           return void (await worker.tryCommand({ id: randomUUID(), type: "abort" }));
         case "newSession":
@@ -139,7 +167,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           return this.post({ type: "models", models: models as never });
         }
         default:
-          return this.post({ type: "toast", message: `Unsupported request: ${message.name}`, level: "warning" });
+          return this.post({ type: "toast", message: `Unsupported request: ${name}`, level: "warning" });
       }
     } catch (error) {
       this.post({ type: "toast", message: error instanceof Error ? error.message : String(error), level: "error" });
@@ -150,7 +178,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const worker = await this.getWorker();
     if (!worker) return;
     try {
-      const state = await worker.command<import("../shared/protocol.js").SessionState>({ id: randomUUID(), type: "getState" });
+      const state = await worker.command<SessionState>({ id: randomUUID(), type: "getState" });
       this.post({ type: "state", state });
     } catch {
       /* the worker reports its own failures */

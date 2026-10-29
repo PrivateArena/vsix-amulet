@@ -204,3 +204,140 @@ button:hover {
 button.primary:hover {
   background: var(--vscode-button-hoverBackground);
 }
+
+/* ------------------------------------------------------------------ context */
+
+.composer {
+  position: relative;
+}
+
+.composer.is-dragging {
+  outline: 1px dashed var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: stretch;
+  max-width: 100%;
+  border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+  border-radius: 10px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  line-height: 18px;
+  overflow: hidden;
+}
+
+.chip-body {
+  padding: 1px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip[data-label] .chip-body {
+  cursor: pointer;
+}
+
+.chip[data-label] .chip-body:hover {
+  text-decoration: underline;
+}
+
+.chip-remove {
+  border: 0;
+  border-left: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.chip-remove:hover {
+  color: var(--vscode-errorForeground);
+}
+
+.chip-quote,
+.chip-note {
+  font-style: italic;
+}
+
+.chip-problem {
+  border-color: var(--vscode-problemError-border, var(--vscode-panel-border));
+}
+
+.chip-image {
+  border-style: dashed;
+}
+
+.chip-sent {
+  border-radius: 8px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+}
+
+.sent-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.picker {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 100%;
+  margin-bottom: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.25);
+  z-index: 5;
+}
+
+.picker-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.picker-item:hover,
+.picker-item.is-active {
+  background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+}
+
+.picker-empty {
+  padding: 4px 8px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.quote-button {
+  position: fixed;
+  z-index: 10;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}

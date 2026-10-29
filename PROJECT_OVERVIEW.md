@@ -14,7 +14,7 @@ software. Consequence: everything under `extension/` and `deobfuscate/out/` is a
 never by pasting generated JavaScript. Do not import, paste, or mechanically transliterate
 those files into Amulet sources.
 
-## What the payload actually contains
+
 
 | area | what it is | what we do with it |
 |---|---|---|
@@ -63,6 +63,12 @@ webview  --postMessage-->  extension host  --Node IPC, JSON envelope-->  agent w
   model, thinking level, compact, abort, restart).
 * **Webview** rebuilds the transcript from `message_start` / `message_update` deltas /
   `message_end` (authoritative) and `tool_execution_*`, with a composer that steers while busy.
+* **Context** (`amulet/src/shared/contextBlock.ts`, `src/host/`, `src/webview/composer.ts`): files
+  attach as references, lines that cannot be re-read from disk attach as quoted text, and the host
+  — never the webview — renders the whole draft into one marked block in front of the message.
+  Entry points: `@` picker, editor selection (command, context menu, `ctrl+shift+'`), explorer
+  files and drops, reported problems, pasted images, long-paste folding, quoting from the
+  transcript, and the two auto-attach settings. Format and budgets: `docs/amulet-context-format.md`.
 * Every value crossing a boundary is declared once in `amulet/src/shared/protocol.ts`.
 
 Verification (`npm run check` in `amulet/`; both smoke tests make one real model call against the
@@ -71,15 +77,17 @@ configured provider inside a throwaway workspace and session directory):
 | test | covers | status |
 |---|---|---|
 | `test/smoke-worker.mjs` | start, empty history, prompt, streaming, tool call, new session, switch back + transcript recovery, session list | PASS |
-| `test/host-activate.cjs` | `activate()` against a stubbed `vscode` API: registrations, CSP html, worker ready, webview command path, run settled, reply content | PASS |
+| `test/context-block.mjs` | wire format, tag order, budgets, escaping and injection cases, round trip, mention parsing, draft merging (23 checks, no model call) | PASS |
+| `test/host-activate.cjs` | `activate()` against a stubbed `vscode` API: registrations, CSP html, worker ready, selection/file/problem capture, dismissal and focus semantics, `@` search, assembled block reaching the worker, run settled, reply content | PASS |
 
-Not yet verified: rendering inside a real VS Code window (needs a live workbench) and context
-attachment, which is the next milestone.
+Not yet verified: rendering inside a real VS Code window (needs a live workbench). The webview's
+chip and picker DOM is exercised only by types and by the host-side half of its protocol.
 
 ## Roadmap
 
 1. **M1 — vertical slice** *(done)*: worker, host, webview, sessions, models, thinking levels, compact, abort, restart.
-2. **M2 — context**: selection / active file / diagnostics attachments, marked context block, images, file mentions.
+2. **M2 — context** *(done)*: references vs. quoted lines, `@` picker, selection/file/problem/image
+   attachment, auto-attach rules with dismiss-then-stay-off memory, context chips on sent messages.
 3. **M3 — changes**: per-tool-call edit tracking, diff view, revert, Git/SCM integration, commit prompt.
 4. **M4 — session rail**: session list, grouping, rename, branching tree, search.
 5. **M5 — platform**: workspace trust, sandbox toggle, hooks, extension status widgets, TUI surface.
@@ -90,6 +98,7 @@ attachment, which is the next milestone.
 
 | file | how it was produced |
 |---|---|
+| `docs/amulet-context-format.md` | Amulet's own context block contract: tags, order, budgets, escaping rules, and which pieces came from the payload versus which are ours |
 | `docs/pi-sdk-embedding-api.md` | the Pi SDK embedding contract, transcribed from the published package's own `.d.ts`, docs and examples (verified against v1.4.0) |
 | `docs/pendant-behaviour-spec.md` | 1.8 k lines condensed from the 20-chapter shipped guide: process model, sessions, context assembly, changes, models, subagents, hooks (2 events), extension API, voice, remote, settings, limits, glossary, `[AMBIGUOUS]` register |
 | `deobfuscate/out/INDEX.md` | binding → kind → line → anchor evidence; subsystem census over all bundles |
@@ -105,3 +114,11 @@ attachment, which is the next milestone.
 `settingsPanel` / `settingsModal`, `bookmarks`, `hooks`, `runtime`, `host`, `chatExport`,
 `themeDiagnostics`, `generationSpeed`, `piPanel`.
 
+
+## Note on `extension/dist/core.wasm`
+
+Part of the shipped product is not JavaScript at all: `core.wasm` (3.7 MB, plus `photon_rs_bg.wasm`
+for image scaling) is a compiled core the host dispatches into by numeric method id — context-block
+assembly, mention parsing, title sanitising. It is why some formats were reconstructed from their
+JavaScript neighbours (host-side builders, webview-side parsers and validators) and from the shipped
+guide's verbatim examples instead of being read directly. Nothing here disassembles it.
