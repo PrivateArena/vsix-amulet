@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": false,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "types": ["node", "vscode"],
+    "baseUrl": ".",
+    "paths": {
+      "amulet-webview-dom": ["./src/webview/dom.d.ts"]
+    }
+  },
+  "include": ["src/host/**/*.ts", "src/worker/**/*.ts", "src/shared/**/*.ts"],
+  "exclude": ["dist", "node_modules", "src/webview"]
+}

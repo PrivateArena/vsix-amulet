@@ -1,0 +1,8 @@
+deobfuscate/out/
+deobfuscate/node_modules/
+node_modules/
+amulet/dist/
+deobfuscate/
+extension/
+\[Content_Types\].xml
+extension.vsixmanifest

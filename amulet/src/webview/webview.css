@@ -1,0 +1,206 @@
+/* Amulet chat webview. Theme colours come from VS Code CSS variables only, so the UI follows
+   the active colour theme without shipping a theme of its own. */
+
+:root {
+  --gap: 0.6rem;
+  --radius: 0.4rem;
+  --mono: var(--vscode-editor-font-family, ui-monospace, monospace);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  display: flex;
+  flex-direction: column;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.item {
+  border-radius: var(--radius);
+  padding: 0.5rem 0.6rem;
+  border: 1px solid transparent;
+}
+
+.item-user {
+  align-self: flex-end;
+  background: var(--vscode-input-background);
+  border-color: var(--vscode-input-border, transparent);
+  max-width: 90%;
+  white-space: pre-wrap;
+}
+
+.item-assistant {
+  align-self: stretch;
+  background: var(--vscode-editor-background);
+  border-color: var(--vscode-panel-border, transparent);
+}
+
+.item-system {
+  align-self: stretch;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  background: var(--vscode-textBlockQuote-background);
+  border-color: var(--vscode-textBlockQuote-border);
+}
+
+.item-tool {
+  align-self: stretch;
+  border-color: var(--vscode-panel-border, transparent);
+  background: var(--vscode-textCodeBlock-background);
+}
+
+.is-streaming .text:last-child::after {
+  content: "";
+}
+
+.text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.thinking {
+  color: var(--vscode-descriptionForeground);
+  border-left: 2px solid var(--vscode-panel-border);
+  padding-left: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.thinking summary {
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.thinking-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-title {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  color: var(--vscode-textLink-foreground);
+}
+
+.tool-inline {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.tool-result {
+  margin: 0.35rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 16rem;
+  overflow-y: auto;
+  color: var(--vscode-descriptionForeground);
+}
+
+.meta {
+  margin-top: 0.35rem;
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.error {
+  color: var(--vscode-errorForeground);
+  font-size: 0.9em;
+}
+
+.composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--vscode-panel-border, transparent);
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  background: var(--vscode-sideBar-background);
+}
+
+.queue {
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+#input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 3.5rem;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.5rem;
+  font-family: inherit;
+}
+
+#input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.status {
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+}
+
+button {
+  font-family: inherit;
+  font-size: 0.85em;
+  border-radius: var(--radius);
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+button:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+button.primary:hover {
+  background: var(--vscode-button-hoverBackground);
+}

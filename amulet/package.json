@@ -1,0 +1,200 @@
+{
+  "name": "amulet",
+  "displayName": "Amulet - Pi Agent for VS Code",
+  "description": "Open-source chat and agent surface for the Pi coding agent, running in the editor.",
+  "version": "0.0.1",
+  "publisher": "amulet",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "pi",
+    "chat"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onView:amulet.chatView"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "amulet",
+          "title": "Amulet",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "amulet": [
+        {
+          "type": "webview",
+          "id": "amulet.chatView",
+          "name": "Chat",
+          "icon": "media/icon.svg",
+          "contextualTitle": "Amulet"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "amulet.newSession",
+        "title": "New Session",
+        "category": "Amulet",
+        "icon": "$(add)"
+      },
+      {
+        "command": "amulet.openSession",
+        "title": "Open Session...",
+        "category": "Amulet",
+        "icon": "$(history)"
+      },
+      {
+        "command": "amulet.selectModel",
+        "title": "Select Model",
+        "category": "Amulet",
+        "icon": "$(hub)"
+      },
+      {
+        "command": "amulet.selectThinkingLevel",
+        "title": "Select Thinking Level",
+        "category": "Amulet",
+        "icon": "$(brain)"
+      },
+      {
+        "command": "amulet.abort",
+        "title": "Stop",
+        "category": "Amulet",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "amulet.compact",
+        "title": "Compact Context",
+        "category": "Amulet"
+      },
+      {
+        "command": "amulet.showLogs",
+        "title": "Show Agent Worker Logs",
+        "category": "Amulet"
+      },
+      {
+        "command": "amulet.restartWorker",
+        "title": "Restart Agent Worker",
+        "category": "Amulet"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "amulet.newSession",
+          "when": "view == amulet.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "amulet.openSession",
+          "when": "view == amulet.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "amulet.selectModel",
+          "when": "view == amulet.chatView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "amulet.newSession",
+        "key": "alt+ctrl+n",
+        "mac": "cmd+ctrl+n"
+      },
+      {
+        "command": "amulet.abort",
+        "key": "alt+ctrl+s",
+        "mac": "cmd+ctrl+s"
+      }
+    ],
+    "configuration": {
+      "title": "Amulet",
+      "properties": {
+        "amulet.agentDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory holding Pi configuration, credentials and sessions. Empty means the Pi default (`~/.pi/agent`)."
+        },
+        "amulet.sessionDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Where session transcripts are written. Empty means Pi's default, grouped per workspace."
+        },
+        "amulet.model": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Model to start sessions with, as `provider/modelId`. Empty means the Pi default."
+        },
+        "amulet.thinkingLevel": {
+          "type": "string",
+          "enum": [
+            "",
+            "off",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "",
+          "markdownDescription": "Reasoning level for new sessions. Empty means the Pi default."
+        },
+        "amulet.autoCompact": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Let the agent compact its context when the conversation approaches the model's window."
+        },
+        "amulet.autoRetry": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Retry automatically when a provider request fails transiently."
+        },
+        "amulet.restoreLastSession": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Reopen the last session of this workspace when the chat view starts."
+        },
+        "amulet.worker.maxOldSpaceMB": {
+          "type": "number",
+          "default": 0,
+          "markdownDescription": "Heap cap for the agent worker process, in MB. 0 leaves Node's default."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
+    "test:worker": "node test/smoke-worker.mjs",
+    "test:host": "node test/host-activate.cjs",
+    "check": "npm run typecheck && npm run build && npm run test:worker && npm run test:host",
+    "vscode:prepublish": "node build.mjs --minify"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.109.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}
